@@ -1,7 +1,9 @@
 const Quiz = require('../models/quiz');
 const CourseProgress = require('../models/courseProgress');
 const SubSection = require('../models/subSection');
+const Course = require('../models/course');
 const { executeCode } = require('../services/codeExecution');
+const { handleNewContentAddition } = require('../utils/certificateRegeneration');
 
 // Create a new quiz
 exports.createQuiz = async (req, res) => {
@@ -89,6 +91,37 @@ exports.createQuiz = async (req, res) => {
 
         // Update subsection with quiz reference
         await SubSection.findByIdAndUpdate(subSectionId, { quiz: quiz._id });
+
+        // Handle certificate regeneration for students who completed the course
+        try {
+            // Find the section that contains this subsection
+            const Section = require('../models/section');
+            const section = await Section.findOne({
+                subSection: subSectionId
+            });
+            
+            if (section) {
+                const course = await Course.findOne({
+                    courseContent: section._id
+                });
+
+                if (course) {
+                    await handleNewContentAddition(
+                        course._id,
+                        'quiz',
+                        {
+                            subSectionId,
+                            quizId: quiz._id,
+                            questionsCount: questions.length,
+                            timeLimit: quiz.timeLimit
+                        }
+                    );
+                }
+            }
+        } catch (certError) {
+            console.error('Error handling certificate regeneration for new quiz:', certError);
+            // Don't fail the quiz creation if certificate regeneration fails
+        }
 
         return res.status(201).json({
             success: true,
@@ -184,6 +217,43 @@ exports.updateQuiz = async (req, res) => {
                 success: false,
                 message: 'Quiz not found'
             });
+        }
+
+        // Handle certificate regeneration for quiz updates
+        try {
+            // Find the subsection that contains this quiz
+            const subSection = await SubSection.findOne({ quiz: quizId });
+            
+            if (subSection) {
+                // Find the section that contains this subsection
+                const Section = require('../models/section');
+                const section = await Section.findOne({
+                    subSection: subSection._id
+                });
+                
+                if (section) {
+                    const course = await Course.findOne({
+                        courseContent: section._id
+                    });
+
+                    if (course) {
+                        await handleNewContentAddition(
+                            course._id,
+                            'quiz_update',
+                            {
+                                subSectionId: subSection._id,
+                                quizId: quiz._id,
+                                questionsCount: questions.length,
+                                timeLimit: quiz.timeLimit,
+                                updateType: 'modification'
+                            }
+                        );
+                    }
+                }
+            }
+        } catch (certError) {
+            console.error('Error handling certificate regeneration for quiz update:', certError);
+            // Don't fail the quiz update if certificate regeneration fails
         }
 
         return res.status(200).json({
@@ -600,9 +670,19 @@ exports.submitQuiz = async (req, res) => {
                 isAnswered = answer !== undefined && answer !== null && 
                            (typeof answer === 'string' ? answer.trim() !== '' : true);
                 
-                // For text answers, give full marks (manual grading can be implemented later)
-                if (isAnswered) {
-                    isCorrect = true;
+                // For short answer questions, check if at least 50% of keywords match
+                if (isAnswered && question.questionType === 'shortAnswer') {
+                  if (!question.keywords || question.keywords.length === 0) {
+                    isCorrect = true; // If no keywords defined, consider it correct
+                  } else {
+                    const studentAnswer = answer.toLowerCase();
+                    const matchedKeywords = question.keywords.filter(keyword => 
+                      studentAnswer.includes(keyword.toLowerCase())
+                    );
+                    isCorrect = matchedKeywords.length >= Math.ceil(question.keywords.length * 0.5);
+                  }
+                } else if (isAnswered) {
+                  isCorrect = true; // For other text answers (like longAnswer)
                 }
             }
 

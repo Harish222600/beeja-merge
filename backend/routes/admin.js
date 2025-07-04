@@ -75,7 +75,6 @@ router.get('/orders', auth, isAdmin, getAllOrders);
 router.delete('/orders/:orderId', auth, isAdmin, deleteOrder);
 router.patch('/orders/:orderId/status', auth, isAdmin, updateOrderStatus);
 router.get('/orders/export-pdf', auth, isAdmin, generateOrdersPDF);
-
 // ================ NOTIFICATION MANAGEMENT ROUTES ================
 router.post('/notifications/send', auth, isAdmin, sendNotification);
 router.get('/notifications', auth, isAdmin, getAllNotifications);

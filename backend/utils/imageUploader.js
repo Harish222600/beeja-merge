@@ -1,9 +1,92 @@
 const cloudinary = require('cloudinary').v2;
+const sharp = require('sharp');
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 5000; // 5 seconds
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Image processing configuration
+const IMAGE_CONFIG = {
+    maxWidth: 1920,
+    maxHeight: 1080,
+    quality: 85,
+    format: 'jpeg',
+    // Maximum file size in bytes (5MB)
+    maxFileSize: 5 * 1024 * 1024
+};
+
+// Function to resize and optimize image
+const processImage = async (fileBuffer, options = {}) => {
+    try {
+        const {
+            maxWidth = IMAGE_CONFIG.maxWidth,
+            maxHeight = IMAGE_CONFIG.maxHeight,
+            quality = IMAGE_CONFIG.quality,
+            format = IMAGE_CONFIG.format
+        } = options;
+
+        console.log('🖼️ Processing image with Sharp...');
+        
+        // Configure Sharp with increased limits for large images
+        const sharpInstance = sharp(fileBuffer, {
+            limitInputPixels: false, // Remove pixel limit
+            sequentialRead: true,    // Better for large images
+            density: 72             // Set reasonable DPI
+        });
+        
+        // Get image metadata
+        const metadata = await sharpInstance.metadata();
+        console.log('Original image metadata:', {
+            width: metadata.width,
+            height: metadata.height,
+            format: metadata.format,
+            size: fileBuffer.length
+        });
+
+        // Check if resizing is needed
+        const needsResize = metadata.width > maxWidth || metadata.height > maxHeight;
+        
+        let processedBuffer;
+        
+        if (needsResize) {
+            console.log(`Resizing image from ${metadata.width}x${metadata.height} to fit within ${maxWidth}x${maxHeight}`);
+            
+            processedBuffer = await sharpInstance
+                .resize(maxWidth, maxHeight, {
+                    fit: 'inside',
+                    withoutEnlargement: true
+                })
+                .jpeg({ 
+                    quality,
+                    progressive: true,
+                    mozjpeg: true
+                })
+                .toBuffer();
+        } else {
+            // Just optimize without resizing
+            console.log('Optimizing image without resizing');
+            processedBuffer = await sharpInstance
+                .jpeg({ 
+                    quality,
+                    progressive: true,
+                    mozjpeg: true
+                })
+                .toBuffer();
+        }
+
+        console.log('✅ Image processed successfully:', {
+            originalSize: fileBuffer.length,
+            processedSize: processedBuffer.length,
+            compressionRatio: ((fileBuffer.length - processedBuffer.length) / fileBuffer.length * 100).toFixed(2) + '%'
+        });
+
+        return processedBuffer;
+    } catch (error) {
+        console.error('Error processing image:', error);
+        throw new Error(`Image processing failed: ${error.message}`);
+    }
+};
 
 const uploadWithRetry = async (file, options, retryCount = 0) => {
     try {
@@ -64,6 +147,40 @@ exports.uploadImageToCloudinary = async (file, folder, height, quality) => {
             size: file.size,
             folder: folder
         });
+
+        // Check if file is an image and needs processing
+        const isImage = file.mimetype && file.mimetype.startsWith('image/');
+        let fileBuffer = file.buffer;
+
+        if (isImage && file.size > IMAGE_CONFIG.maxFileSize) {
+            console.log('⚠️ Large image detected, processing before upload...');
+            
+            // Process image with custom options if height is specified
+            const processOptions = {};
+            if (height) {
+                processOptions.maxHeight = height;
+                processOptions.maxWidth = height * 2; // Maintain aspect ratio
+            }
+            
+            // Process the image to reduce size
+            fileBuffer = await processImage(file.buffer, processOptions);
+            
+            console.log('📏 Image processed for upload:', {
+                originalSize: file.size,
+                processedSize: fileBuffer.length,
+                reduction: ((file.size - fileBuffer.length) / file.size * 100).toFixed(2) + '%'
+            });
+        } else if (isImage && (file.size > 1024 * 1024)) { // Process images larger than 1MB
+            console.log('🔄 Optimizing image before upload...');
+            
+            const processOptions = {};
+            if (height) {
+                processOptions.maxHeight = height;
+                processOptions.maxWidth = height * 2;
+            }
+            
+            fileBuffer = await processImage(file.buffer, processOptions);
+        }
         
         // Base options for all uploads
         const options = { 
@@ -76,13 +193,7 @@ exports.uploadImageToCloudinary = async (file, folder, height, quality) => {
             quality: quality || 'auto:good'
         };
 
-        // Add transformation options if height is specified
-        if (height) {
-            options.height = height;
-            options.crop = 'scale';
-        }
-
-        // Specific options based on folder/usage
+        // Specific options based on folder/usage - removed height/crop since we pre-process
         if (folder === 'chat-images') {
             // Chat images need immediate processing
             options.async = false;
@@ -119,8 +230,8 @@ exports.uploadImageToCloudinary = async (file, folder, height, quality) => {
                 }
             );
 
-            if (file.buffer) {
-                uploadStream.end(file.buffer);
+            if (fileBuffer) {
+                uploadStream.end(fileBuffer);
             } else {
                 reject(new Error('File buffer is required'));
             }

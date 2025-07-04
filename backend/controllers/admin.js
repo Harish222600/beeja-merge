@@ -576,7 +576,6 @@ exports.setCourseType = async (req, res) => {
     }
 };
 
-
 // ================ GET ANALYTICS DATA ================
 exports.getAnalytics = async (req, res) => {
     try {

@@ -181,9 +181,9 @@ const VideoDetails = () => {
             <div
               style={{
                 backgroundImage:
-                  "linear-gradient(to top, rgb(0, 0, 0), rgba(0,0,0,0.7), rgba(0,0,0,0.5), rgba(0,0,0,0.1)",
+                  "linear-gradient(to top, rgb(0, 0, 0), rgba(0,0,0,0.7), rgba(0,0,0,0.5), rgba(0,0,0,0.1))",
               }}
-              className="full absolute inset-0 z-[100] grid h-full place-content-center font-inter"
+              className="w-full absolute inset-0 z-[100] grid h-full place-content-center font-inter"
             >
               {!completedLectures.includes(subSectionId) && (
                 <IconBtn
@@ -233,7 +233,7 @@ const VideoDetails = () => {
                   onClick={goToNextVideo}
                   className="blackButton"
                 >
-                  Next
+                  {isLastVideo ? "Go to Course" : "Next"}
                 </button>
               )}
               </div>

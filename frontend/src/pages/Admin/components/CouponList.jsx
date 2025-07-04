@@ -3,8 +3,7 @@ import { useSelector } from 'react-redux';
 import { getAllCoupons, toggleCouponStatus } from '../../../services/operations/couponAPI';
 import { toast } from 'react-hot-toast';
 import CouponDetailsModal from '../../../components/common/CouponDetailsModal';
-import CouponShareModal from '../../../components/common/CouponShareModal';
-import { FiTag, FiCalendar, FiUsers, FiDollarSign, FiClock, FiEye, FiSearch, FiX, FiShare2 } from 'react-icons/fi';
+import { FiTag, FiCalendar, FiUsers, FiDollarSign, FiClock, FiEye, FiSearch, FiX, FiShare2, FiCopy } from 'react-icons/fi';
 
 export default function CouponList() {
   const { token } = useSelector((state) => state.auth);
@@ -13,28 +12,119 @@ export default function CouponList() {
   const [toggleLoading, setToggleLoading] = useState({});
   const [selectedCoupon, setSelectedCoupon] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [couponToShare, setCouponToShare] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [showShareMenu, setShowShareMenu] = useState(null);
+
+  // Admin configurable share options
+  const [enabledShareOptions] = useState([
+    'copy',
+    'native'
+  ]);
+
+  const generateCouponShareContent = (coupon) => {
+    const websiteUrl = window.location.origin;
+    const expiryDate = new Date(coupon.expiryDate).toLocaleDateString('en-IN', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    return `🎉 Special Discount Coupon! 🎉
+
+💳 Coupon Code: ${coupon.code}
+💰 Discount: ${coupon.discountType === 'percentage' 
+      ? `${coupon.discountValue}% OFF` 
+      : `₹${coupon.discountValue} OFF`}
+🔗 Valid For: ${coupon.linkedTo === 'course' ? 'Individual Courses' : 'Bundle Courses'}
+⏰ Valid Until: ${expiryDate}
+${coupon.minimumOrderAmount > 0 ? `🛒 Minimum Order: ₹${coupon.minimumOrderAmount}` : ''}
+
+🌐 Visit: ${websiteUrl}
+
+Don't miss out on this amazing offer! 🚀`;
+  };
+
+  const handleShare = async (coupon, method) => {
+    const shareContent = generateCouponShareContent(coupon);
+    const websiteUrl = window.location.origin;
+
+    try {
+      switch (method) {
+        case 'copy':
+          await navigator.clipboard.writeText(shareContent);
+          toast.success('Coupon details copied to clipboard!');
+          break;
+
+        case 'native':
+          if (navigator.share) {
+            await navigator.share({
+              title: `${coupon.code} - Special Discount Coupon`,
+              text: shareContent,
+              url: websiteUrl
+            });
+            toast.success('Shared successfully!');
+          } else {
+            // If Web Share API is not supported, show all sharing options
+            const shareData = {
+              title: `${coupon.code} - Special Discount Coupon`,
+              text: shareContent,
+              url: websiteUrl
+            };
+            
+            // Create a temporary element to trigger system share
+            const shareButton = document.createElement('button');
+            shareButton.addEventListener('click', async () => {
+              try {
+                await navigator.share(shareData);
+                toast.success('Shared successfully!');
+              } catch (error) {
+                if (error.name !== 'AbortError') {
+                  // Fallback to clipboard if sharing fails
+                  await navigator.clipboard.writeText(shareContent);
+                  toast.success('Copied to clipboard (Sharing not supported)');
+                }
+              }
+            });
+            shareButton.click();
+            shareButton.remove();
+          }
+          break;
+
+        default:
+          await navigator.clipboard.writeText(shareContent);
+          toast.success('Copied to clipboard');
+      }
+    } catch (error) {
+      console.error('Error sharing coupon:', error);
+      // Fallback to copy
+      try {
+        await navigator.clipboard.writeText(shareContent);
+        toast.success('Coupon details copied to clipboard!');
+      } catch (copyError) {
+        toast.error('Failed to share coupon');
+      }
+    }
+    setShowShareMenu(null);
+  };
 
   useEffect(() => {
     fetchCoupons();
-
-    // Add event listener for share coupon event
-    const handleShareCouponEvent = (event) => {
-      const coupon = event.detail;
-      setCouponToShare(coupon);
-      setShowShareModal(true);
-    };
-
-    window.addEventListener('shareCoupon', handleShareCouponEvent);
-
-    // Cleanup
-    return () => {
-      window.removeEventListener('shareCoupon', handleShareCouponEvent);
-    };
   }, []);
+
+  // Close share menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showShareMenu && !event.target.closest('.share-menu-container')) {
+        setShowShareMenu(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showShareMenu]);
 
   const fetchCoupons = async () => {
     try {
@@ -70,12 +160,6 @@ export default function CouponList() {
   const handleCouponClick = (coupon) => {
     setSelectedCoupon(coupon);
     setShowDetailsModal(true);
-  };
-
-  const handleShareCoupon = (coupon, event) => {
-    event.stopPropagation(); // Prevent triggering the coupon click
-    setCouponToShare(coupon);
-    setShowShareModal(true);
   };
 
   const formatDate = (dateString) => {
@@ -148,6 +232,22 @@ export default function CouponList() {
     
     return matchesSearch && matchesStatus;
   });
+
+  const getShareOptionLabel = (option) => {
+    const labels = {
+      copy: 'Copy to Clipboard',
+      native: 'Share via Apps'
+    };
+    return labels[option] || option;
+  };
+
+  const getShareOptionIcon = (option) => {
+    const icons = {
+      copy: <FiCopy className="text-xs" />,
+      native: <FiShare2 className="text-xs" />
+    };
+    return icons[option] || <FiShare2 className="text-xs" />;
+  };
 
   if (loading) {
     return (
@@ -268,7 +368,7 @@ export default function CouponList() {
                   </p>
                 </div>
 
-                {/* Action Buttons and Toggle Switch */}
+                {/* Actions Section */}
                 <div className="flex flex-row sm:flex-col items-center sm:items-end gap-4 sm:gap-2">
                   <div className="text-left sm:text-right">
                     <p className="text-sm text-richblack-400 mb-1">Usage</p>
@@ -287,17 +387,38 @@ export default function CouponList() {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-row sm:flex-col items-center gap-3">
                     {/* Share Button */}
-                    <button
-                      onClick={(e) => handleShareCoupon(coupon, e)}
-                      className="p-2 bg-richblack-700 hover:bg-richblack-600 border border-richblack-600 hover:border-yellow-500/50 rounded-lg transition-all duration-200 group"
-                      title="Share Coupon"
-                    >
-                      <FiShare2 className="text-richblack-300 group-hover:text-yellow-400 text-sm" />
-                    </button>
+                    <div className="relative share-menu-container">
+                      <button
+                        onClick={() => setShowShareMenu(showShareMenu === coupon._id ? null : coupon._id)}
+                        className="flex items-center gap-1 px-2 py-1 text-yellow-50 hover:text-yellow-100 transition-colors"
+                        title="Share Coupon"
+                      >
+                        <FiShare2 className="text-sm" />
+                        <span className="text-xs">Share</span>
+                      </button>
 
-                    {/* Modern Toggle Switch */}
+                      {/* Dynamic Share Menu - Matching existing design */}
+                      {showShareMenu === coupon._id && (
+                        <div className="absolute right-0 top-full mt-1 bg-richblack-700 border border-richblack-600 rounded-md shadow-lg z-50 min-w-[140px]">
+                          <div className="py-1">
+                            {enabledShareOptions.map((option) => (
+                              <button
+                                key={option}
+                                onClick={() => handleShare(coupon, option)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-richblack-300 hover:bg-richblack-600 hover:text-richblack-100 transition-colors text-left"
+                              >
+                                {getShareOptionIcon(option)}
+                                {getShareOptionLabel(option)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Toggle Switch */}
                     <div className="flex flex-col items-center gap-2">
                       <span className={`text-xs font-medium ${coupon.isActive ? 'text-green-400' : 'text-red-400'}`}>
                         {coupon.isActive ? 'Active' : 'Inactive'}
@@ -392,12 +513,6 @@ export default function CouponList() {
         isOpen={showDetailsModal}
         onClose={() => setShowDetailsModal(false)}
         coupon={selectedCoupon}
-      />
-
-      <CouponShareModal 
-        isOpen={showShareModal}
-        onClose={() => setShowShareModal(false)}
-        coupon={couponToShare}
       />
     </>
   );

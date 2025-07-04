@@ -64,7 +64,7 @@ export default function QuizForm({ register, setValue, getValues, errors, watch 
         <p className="text-lg font-semibold text-richblack-5">Quiz Questions</p>
         <IconBtn 
           text="Add Question"
-          onClick={addQuestion}
+          onclick={addQuestion}
           disabled={questions.length >= 25}
         >
           <RiAddLine />

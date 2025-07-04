@@ -512,7 +512,7 @@ export const createCourseAsAdmin = async (formData, token) => {
       throw new Error("No course data received in response")
     }
 
-    toast.success("Course created successfully")
+    
     result = response.data.course
   } catch (error) {
     console.error("CREATE_COURSE_AS_ADMIN_API ERROR:", {

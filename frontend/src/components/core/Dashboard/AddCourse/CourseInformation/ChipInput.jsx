@@ -4,21 +4,27 @@ import { MdClose } from "react-icons/md"
 import { useSelector } from "react-redux"
 
 // Defining a functional component ChipInput
-export default function ChipInput({ label, name, placeholder, register, errors, setValue, }) {
+export default function ChipInput({ label, name, placeholder, register, errors, setValue, initialData }) {
   const { editCourse, course } = useSelector((state) => state.course)
 
   // Setting up state for managing chips array
   const [chips, setChips] = useState([])
 
   useEffect(() => {
-    if (editCourse) {
-      // setChips(JSON.parse(course?.tag))
-
-      setChips(course?.tag)
+    // Priority: initialData prop > Redux state > empty array
+    let initialChips = [];
+    
+    if (initialData && Array.isArray(initialData)) {
+      // Use initialData prop if provided (for Admin context)
+      initialChips = initialData;
+    } else if (editCourse && course?.tag) {
+      // Use Redux state if in edit mode (for regular course editing)
+      initialChips = course.tag;
     }
-
-    register(name, { required: true, validate: (value) => value.length > 0 }, chips);
-  }, [])
+    
+    setChips(initialChips);
+    register(name, { required: true, validate: (value) => value.length > 0 }, initialChips);
+  }, [initialData, editCourse, course?.tag])
 
   // "Updates value whenever 'chips' is modified
   useEffect(() => {

@@ -36,75 +36,56 @@ export default function VideoDetailsSidebar({ setReviewModal }) {
     passedQuizzes,
   } = useSelector((state) => state.viewCourse)
 
+
   const { courseViewSidebar } = useSelector(state => state.sidebar)
 
 
-  // Memoized section access calculation
-  const memoizedSectionAccess = useMemo(() => {
-    if (!courseSectionData.length) return {}
-    
-    const accessStatus = {}
-    
-    // First section is always accessible
-    if (courseSectionData.length > 0) {
-      accessStatus[courseSectionData[0]._id] = true
-    }
-    
-    // For subsequent sections, check if previous section is completed
-    for (let i = 1; i < courseSectionData.length; i++) {
-      const currentSection = courseSectionData[i]
-      const previousSection = courseSectionData[i - 1]
-      
-      // Check if all subsections in previous section are completed
-      const previousSectionCompleted = previousSection.subSection.every(subSec => {
-        const videoCompleted = completedLectures.includes(subSec._id)
-        const quizCompleted = subSec.quiz ? completedQuizzes.includes(subSec._id) : true
-        return videoCompleted && quizCompleted
-      })
-      
-      accessStatus[currentSection._id] = previousSectionCompleted
-    }
-    
-    return accessStatus
-  }, [courseSectionData, completedLectures, completedQuizzes])
-
-  // Update section access when memoized value changes
-  useEffect(() => {
-    setSectionAccess(memoizedSectionAccess)
-  }, [memoizedSectionAccess])
-
-  // Optimized section selection handler
-  const handleSectionSelection = useCallback(() => {
-    if (!courseSectionData.length) return
-    
-    const currentSectionIndx = courseSectionData.findIndex((data) => data._id === sectionId)
-    if (currentSectionIndx === -1) return
-    
-    const currentSubSectionIndx = courseSectionData[currentSectionIndx]?.subSection.findIndex((data) => data._id === subSectionId)
-    const activeSubSectionId = courseSectionData[currentSectionIndx]?.subSection?.[currentSubSectionIndx]?._id
-    
-    setActiveStatus(courseSectionData[currentSectionIndx]?._id)
-    setVideoBarActive(activeSubSectionId)
-  }, [courseSectionData, sectionId, subSectionId])
-
   // set which section - subSection is selected 
   useEffect(() => {
-    handleSectionSelection()
-  }, [handleSectionSelection, location.pathname])
+    ; (() => {
+      if (!courseSectionData.length) return
+      const currentSectionIndx = courseSectionData.findIndex((data) => data._id === sectionId)
+      const currentSubSectionIndx = courseSectionData?.[currentSectionIndx]?.subSection.findIndex((data) => data._id === subSectionId)
+      const activeSubSectionId = courseSectionData[currentSectionIndx]?.subSection?.[currentSubSectionIndx]?._id
+      setActiveStatus(courseSectionData?.[currentSectionIndx]?._id)
+      setVideoBarActive(activeSubSectionId)
+    })()
+  }, [courseSectionData, courseEntireData, location.pathname])
 
-  // Memoized navigation handler
-  const handleNavigation = useCallback((sectionId, subSectionId) => {
-    navigate(`/view-course/${courseEntireData?._id}/section/${sectionId}/sub-section/${subSectionId}`)
-    setVideoBarActive(subSectionId)
-    if (courseViewSidebar && window.innerWidth <= 640) {
-      dispatch(setCourseViewSidebar(false))
+  // Check section access for all sections with optimized logic
+  useEffect(() => {
+    const checkAllSectionAccess = async () => {
+      if (!courseSectionData.length || !courseEntireData?._id || !token) return
+      
+      const accessStatus = {}
+      
+      // First section is always accessible
+      if (courseSectionData.length > 0) {
+        accessStatus[courseSectionData[0]._id] = true
+      }
+      
+      // For subsequent sections, check if previous section is completed
+      for (let i = 1; i < courseSectionData.length; i++) {
+        const currentSection = courseSectionData[i]
+        const previousSection = courseSectionData[i - 1]
+        
+        // Check if all subsections in previous section are completed
+        const previousSectionCompleted = previousSection.subSection.every(subSec => {
+          const videoCompleted = completedLectures.includes(subSec._id)
+          // If there's a quiz, it should also be completed
+          const quizCompleted = subSec.quiz ? completedQuizzes.includes(subSec._id) : true
+          return videoCompleted && quizCompleted
+        })
+        
+        // Use client-side check as primary source of truth
+        accessStatus[currentSection._id] = previousSectionCompleted
+      }
+      
+      setSectionAccess(accessStatus)
     }
-  }, [navigate, courseEntireData?._id, courseViewSidebar, dispatch])
 
-  // Memoized quiz navigation handler
-  const handleQuizNavigation = useCallback((sectionId, subSectionId) => {
-    navigate(`/view-course/${courseEntireData?._id}/section/${sectionId}/sub-section/${subSectionId}/quiz`)
-  }, [navigate, courseEntireData?._id])
+    checkAllSectionAccess()
+  }, [courseSectionData, courseEntireData, completedLectures, completedQuizzes, token])
 
 
 
@@ -244,8 +225,12 @@ export default function VideoDetailsSidebar({ setReviewModal }) {
                                 : "hover:bg-richblack-900 cursor-pointer"
                           }`}
                           onClick={() => {
-                            if (isLocked) return
-                            handleNavigation(section._id, topic._id)
+                            if (isLocked) {
+                              return // Don't navigate if locked
+                            }
+                            navigate(`/view-course/${courseEntireData?._id}/section/${section?._id}/sub-section/${topic?._id}`)
+                            setVideoBarActive(topic._id)
+                            courseViewSidebar && window.innerWidth <= 640 ? dispatch(setCourseViewSidebar(false)) : null;
                           }}
                         >
                           <input
@@ -281,7 +266,7 @@ export default function VideoDetailsSidebar({ setReviewModal }) {
                         {/* Quiz Button - Show based on quiz status */}
                         {topic.quiz && (
                           <button
-                            onClick={() => handleQuizNavigation(section._id, topic._id)}
+                            onClick={() => navigate(`/view-course/${courseEntireData?._id}/section/${section?._id}/sub-section/${topic?._id}/quiz`)}
                             className={`ml-11 mr-5 mt-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                               passedQuizzes.includes(topic._id)
                                 ? 'bg-green-700 text-white hover:bg-green-600'

@@ -113,37 +113,33 @@ export default function CourseCategories() {
   const onSubmit = async (data) => {
     setLoading(true)
     
-    try {
-      const categoryData = {
-        name: data.categoryName,
-        description: data.categoryDescription,
-        icon: selectedIcon
-      }
-      
-      let result
-      if (editingCategory) {
-        // Update existing category
-        categoryData.categoryId = editingCategory._id
-        result = await updateCategory(categoryData, token)
-      } else {
-        // Create new category
-        result = await createCategory(categoryData, token)
-      }
-      
-      if (result) {
-        reset()
-        setSelectedIcon('FaBook')
-        setShowCreateForm(false)
-        setShowIconPicker(false)
-        setEditingCategory(null)
-        // Reload categories to show the updated list
-        loadCategories()
-      }
-    } catch (error) {
-      console.error('Error in onSubmit:', error)
-    } finally {
-      setLoading(false)
+    const categoryData = {
+      name: data.categoryName,
+      description: data.categoryDescription,
+      icon: selectedIcon
     }
+    
+    let result
+    if (editingCategory) {
+      // Update existing category
+      categoryData.categoryId = editingCategory._id
+      result = await updateCategory(categoryData, token)
+    } else {
+      // Create new category
+      result = await createCategory(categoryData, token)
+    }
+    
+    if (result) {
+      reset()
+      setSelectedIcon('FaBook')
+      setShowCreateForm(false)
+      setShowIconPicker(false)
+      setEditingCategory(null)
+      // Reload categories to show the updated list
+      loadCategories()
+    }
+    
+    setLoading(false)
   }
 
   const renderIcon = (iconName) => {

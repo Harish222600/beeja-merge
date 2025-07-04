@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useSelector } from "react-redux"
 import { useForm } from "react-hook-form"
 import { toast } from "react-hot-toast"
@@ -11,32 +11,61 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
   const [timeLimit, setTimeLimit] = useState(10) // Default 10 minutes
   const [questions, setQuestions] = useState([
     {
-      questionText: "",
-      questionType: "multipleChoice",
-      options: ["", "", "", ""],
-      answers: ["", "", "", ""], // For match the following
-      correctAnswers: [], // For multiple choice (array of indices)
-      correctAnswer: null, // For single answer (single index)
-      marks: 5,
-      required: true
+        questionText: "",
+        questionType: "multipleChoice",
+        options: ["", "", "", ""],
+        answers: ["", "", "", ""], // For match the following
+        correctAnswers: [], // For multiple choice (array of indices)
+        correctAnswer: null, // For single answer (single index)
+        keywords: [], // For short answer questions
+        marks: 5,
+        required: true
     }
   ])
+
+  // Refs for question containers to scroll to on validation error
+  const questionRefs = useRef([])
+  
+  // State to track validation errors for visual indicators
+  const [validationErrors, setValidationErrors] = useState({})
 
   // Initialize with existing quiz data if editing
   useEffect(() => {
     if (existingQuiz) {
       if (existingQuiz.questions) {
-        setQuestions(existingQuiz.questions.map(q => {
-          const baseQuestion = {
+        const processedQuestions = existingQuiz.questions.map(q => {
+          let baseQuestion = {
             questionText: q.questionText || "",
             questionType: q.questionType || "multipleChoice",
-            options: q.options || ["", "", "", ""],
-            answers: q.answers || ["", "", "", ""], // For match the following
+            options: [],
+            answers: [], // For match the following
             correctAnswers: q.correctAnswers || [],
             correctAnswer: q.correctAnswer !== undefined ? q.correctAnswer : null,
+            keywords: Array.isArray(q.keywords) ? [...q.keywords] : [], // Deep copy keywords array
             marks: q.marks || 5,
             required: q.required !== undefined ? q.required : true
           };
+
+          // Ensure keywords are properly initialized for short answer questions
+          if (q.questionType === "shortAnswer" && !baseQuestion.keywords.length && q.keywords) {
+            baseQuestion.keywords = Array.isArray(q.keywords) ? [...q.keywords] : [];
+          }
+
+          // Special handling for match the following questions
+          if (q.questionType === "matchTheFollowing") {
+            // Ensure both options and answers arrays exist and have proper length
+            const maxLength = Math.max(
+              (q.options || []).length,
+              (q.answers || []).length,
+              4 // minimum length
+            );
+            baseQuestion.options = Array(maxLength).fill("").map((_, i) => q.options?.[i] || "");
+            baseQuestion.answers = Array(maxLength).fill("").map((_, i) => q.answers?.[i] || "");
+          } else {
+            // For other question types
+            baseQuestion.options = q.options || ["", "", "", ""];
+            baseQuestion.answers = q.answers || [];
+          }
 
           // Add code solving specific fields if it's a code solving question
           if (q.questionType === "codeSolve") {
@@ -50,7 +79,9 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
           }
 
           return baseQuestion;
-        }))
+        });
+        
+        setQuestions(processedQuestions);
       }
       if (existingQuiz.timeLimit) {
         setTimeLimit(Math.floor(existingQuiz.timeLimit / 60)); // Convert seconds to minutes
@@ -74,6 +105,7 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
         answers: ["", "", "", ""], // For match the following
         correctAnswers: [],
         correctAnswer: null,
+        keywords: [], // For short answer questions
         marks: 5,
         required: true
       }])
@@ -105,79 +137,99 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
 
   // Submit quiz
   const onSubmit = async () => {
+    // Clear previous validation errors
+    setValidationErrors({});
+    
     // Validate questions
     const invalidQuestions = [];
-    const validationErrors = [];
+    const validationErrorsList = [];
+    const newValidationErrors = {};
 
     questions.forEach((q, index) => {
+      const questionErrors = [];
+      
       if (!q.questionText.trim()) {
         invalidQuestions.push(index);
-        validationErrors.push(`Question ${index + 1}: Question text is required`);
-        return;
+        validationErrorsList.push(`Question ${index + 1}: Question text is required`);
+        questionErrors.push('questionText');
       }
       
-      if (q.questionType === "shortAnswer") return;
-      
-      if (q.questionType === "matchTheFollowing") {
+      if (q.questionType === "shortAnswer") {
+        // For short answer, check if keywords are provided
+        if (!q.keywords || q.keywords.length === 0) {
+          invalidQuestions.push(index);
+          validationErrorsList.push(`Question ${index + 1}: At least one keyword is required`);
+          questionErrors.push('keywords');
+        }
+      } else if (q.questionType === "matchTheFollowing") {
         if (q.options.some(opt => !opt.trim()) || 
             !q.answers || 
             q.answers.some(ans => !ans || !ans.trim())) {
           invalidQuestions.push(index);
-          validationErrors.push(`Question ${index + 1}: All match options and answers are required`);
+          validationErrorsList.push(`Question ${index + 1}: All match options and answers are required`);
+          questionErrors.push('options');
         }
-        return;
-      }
-
-      if (q.questionType === "codeSolve") {
+      } else if (q.questionType === "codeSolve") {
         // Validate code solving questions
         if (!q.programmingLanguage) {
           invalidQuestions.push(index);
-          validationErrors.push(`Question ${index + 1}: Programming language is required`);
-          return;
+          validationErrorsList.push(`Question ${index + 1}: Programming language is required`);
+          questionErrors.push('programmingLanguage');
         }
         if (!q.testCases || !Array.isArray(q.testCases) || q.testCases.length === 0) {
           invalidQuestions.push(index);
-          validationErrors.push(`Question ${index + 1}: At least one test case is required`);
-          return;
+          validationErrorsList.push(`Question ${index + 1}: At least one test case is required`);
+          questionErrors.push('testCases');
+        } else {
+          // Check if all test cases have expected output
+          const invalidTestCase = q.testCases.findIndex(testCase => 
+            !testCase.expectedOutput || testCase.expectedOutput.trim() === ''
+          );
+          if (invalidTestCase !== -1) {
+            invalidQuestions.push(index);
+            validationErrorsList.push(`Question ${index + 1}: Test case ${invalidTestCase + 1} expected output is required`);
+            questionErrors.push('testCases');
+          }
+        }
+      } else if (q.questionType === "multipleChoice" || q.questionType === "singleAnswer") {
+        // Validate options are filled
+        if (q.options.some(opt => !opt.trim())) {
+          invalidQuestions.push(index);
+          validationErrorsList.push(`Question ${index + 1}: All options are required`);
+          questionErrors.push('options');
         }
         
-        // Check if all test cases have expected output
-        const invalidTestCase = q.testCases.findIndex(testCase => 
-          !testCase.expectedOutput || testCase.expectedOutput.trim() === ''
-        );
-        if (invalidTestCase !== -1) {
-          invalidQuestions.push(index);
-          validationErrors.push(`Question ${index + 1}: Test case ${invalidTestCase + 1} expected output is required`);
-          return;
+        // Validate correct answers are selected (checkboxes/radio buttons)
+        if (q.questionType === "multipleChoice") {
+          if (!q.correctAnswers || q.correctAnswers.length === 0) {
+            invalidQuestions.push(index);
+            validationErrorsList.push(`Question ${index + 1}: Please select at least one correct answer`);
+            questionErrors.push('correctAnswers');
+          }
+        } else if (q.questionType === "singleAnswer") {
+          if (q.correctAnswer === null || q.correctAnswer === undefined) {
+            invalidQuestions.push(index);
+            validationErrorsList.push(`Question ${index + 1}: Please select the correct answer`);
+            questionErrors.push('correctAnswer');
+          }
         }
-        return;
       }
       
-      if (q.options.some(opt => !opt.trim())) {
-        invalidQuestions.push(index);
-        validationErrors.push(`Question ${index + 1}: All options are required`);
+      if (questionErrors.length > 0) {
+        newValidationErrors[index] = questionErrors;
       }
     });
 
+    // Set validation errors for visual indicators
+    setValidationErrors(newValidationErrors);
+
     if (invalidQuestions.length > 0) {
-      toast.error(validationErrors[0]); // Show the first validation error
-      return;
-    }
-
-    // Validate correct answers are selected
-    const questionsWithoutAnswers = questions.filter((q, index) => {
-      if (q.questionType === "codeSolve") return false; // Code solving questions don't need predefined answers
-      if (q.questionType === "multipleChoice") {
-        return !q.correctAnswers || q.correctAnswers.length === 0
-      } else if (q.questionType === "singleAnswer") {
-        return q.correctAnswer === null || q.correctAnswer === undefined
+      toast.error(validationErrorsList[0]); // Show the first validation error
+      // Scroll to the first invalid question
+      if (questionRefs.current[invalidQuestions[0]]) {
+        questionRefs.current[invalidQuestions[0]].scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
-      return false // Short answer questions don't need predefined correct answers
-    })
-
-    if (questionsWithoutAnswers.length > 0) {
-      toast.error("Please select correct answers for all multiple choice and single answer questions")
-      return
+      return;
     }
 
     setLoading(true)
@@ -192,7 +244,11 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
         }
 
         if (q.questionType === "shortAnswer") {
-          return { ...base, options: [] }
+          return { 
+            ...base, 
+            options: [],
+            keywords: q.keywords || []
+          }
         }
 
         if (q.questionType === "codeSolve") {
@@ -304,7 +360,15 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
 
       <div className="space-y-6 max-h-[60vh] overflow-y-auto">
         {questions.map((question, qIndex) => (
-          <div key={qIndex} className="space-y-4 border border-richblack-700 p-4 rounded-lg">
+          <div 
+            key={qIndex} 
+            ref={el => questionRefs.current[qIndex] = el}
+            className={`space-y-4 border p-4 rounded-lg transition-colors ${
+              validationErrors[qIndex] 
+                ? 'border-red-500 bg-red-900/10' 
+                : 'border-richblack-700'
+            }`}
+          >
             <div className="flex justify-between items-center">
               <p className="text-sm text-richblack-5 font-medium">Question {qIndex + 1}</p>
               {questions.length > 1 && (
@@ -324,9 +388,16 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
                 value={question.questionText}
                 onChange={(e) => handleQuestionChange(qIndex, "questionText", e.target.value)}
                 placeholder="Enter your question here..."
-                className="w-full bg-richblack-700 text-richblack-5 rounded-lg p-3 min-h-[80px] resize-none"
+                className={`w-full bg-richblack-700 text-richblack-5 rounded-lg p-3 min-h-[80px] resize-none border transition-colors ${
+                  validationErrors[qIndex]?.includes('questionText')
+                    ? 'border-red-500 focus:border-red-400'
+                    : 'border-richblack-600 focus:border-yellow-50'
+                }`}
                 required
               />
+              {validationErrors[qIndex]?.includes('questionText') && (
+                <span className="text-red-400 text-xs">Question text is required</span>
+              )}
             </div>
 
             {/* Question Type */}
@@ -350,6 +421,27 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
                       expectedOutput: '',
                       isHidden: false
                     }];
+                  }
+                  
+                  // Initialize match the following with 3 pairs
+                  if (newType === 'matchTheFollowing') {
+                    newQuestion.options = Array(3).fill('');
+                    newQuestion.answers = Array(3).fill('');
+                  }
+                  
+                  // Preserve existing data when changing back to matchTheFollowing
+                  if (newType === 'matchTheFollowing' && questions[qIndex].questionType === 'matchTheFollowing') {
+                    newQuestion.options = questions[qIndex].options || Array(3).fill('');
+                    newQuestion.answers = questions[qIndex].answers || Array(3).fill('');
+                  }
+                  
+                  // Preserve keywords when switching to/from shortAnswer
+                  if (newType === 'shortAnswer') {
+                    // Keep existing keywords if they exist
+                    newQuestion.keywords = questions[qIndex].keywords || [];
+                  } else if (questions[qIndex].questionType === 'shortAnswer') {
+                    // Preserve keywords when switching away from shortAnswer (in case user switches back)
+                    newQuestion.keywords = questions[qIndex].keywords || [];
                   }
                   
                   const newQuestions = [...questions];
@@ -500,9 +592,34 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
                     {question.questionType === "matchTheFollowing" ? "Match the Following *" : "Options *"}
                   </label>
                   {question.questionType === "matchTheFollowing" && (
-                    <p className="text-xs text-richblack-300">
-                      Add questions on the left and their corresponding answers on the right
-                    </p>
+                    <>
+                      <div className="mb-4">
+                        <label className="text-sm text-richblack-5 mb-2 block">Number of Questions (3-7)</label>
+                        <select
+                          value={question.options?.length || 4}
+                          onChange={(e) => {
+                            const count = parseInt(e.target.value);
+                            const newQuestions = [...questions];
+                            // Create arrays of the selected size, preserving existing values
+                            newQuestions[qIndex].options = Array(count).fill('').map((_, i) => 
+                              question.options[i] || ''
+                            );
+                            newQuestions[qIndex].answers = Array(count).fill('').map((_, i) => 
+                              question.answers?.[i] || ''
+                            );
+                            setQuestions(newQuestions);
+                          }}
+                          className="w-full bg-richblack-700 text-richblack-5 rounded-lg p-3"
+                        >
+                          {[3,4,5,6,7].map(num => (
+                            <option key={num} value={num}>{num} Questions</option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="text-xs text-richblack-300 mb-4">
+                        Add questions on the left and their corresponding answers on the right
+                      </p>
+                    </>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -525,12 +642,18 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
                               type="text"
                               value={question.answers?.[oIndex] || ''}
                               onChange={(e) => {
-                                const newQuestions = [...questions]
+                                const newQuestions = [...questions];
+                                // Initialize answers array if it doesn't exist
                                 if (!newQuestions[qIndex].answers) {
-                                  newQuestions[qIndex].answers = []
+                                  newQuestions[qIndex].answers = Array(newQuestions[qIndex].options.length).fill('');
                                 }
-                                newQuestions[qIndex].answers[oIndex] = e.target.value
-                                setQuestions(newQuestions)
+                                // Ensure answers array is at least as long as options array
+                                while (newQuestions[qIndex].answers.length < newQuestions[qIndex].options.length) {
+                                  newQuestions[qIndex].answers.push('');
+                                }
+                                // Update the answer at the specific index
+                                newQuestions[qIndex].answers[oIndex] = e.target.value;
+                                setQuestions(newQuestions);
                               }}
                               placeholder={`Answer ${oIndex + 1}`}
                               className="w-full bg-richblack-700 text-richblack-5 rounded-lg p-3 border border-richblack-600 focus:border-yellow-50 transition-colors"
@@ -544,13 +667,21 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
                           value={option}
                           onChange={(e) => handleOptionChange(qIndex, oIndex, e.target.value)}
                           placeholder={`Option ${oIndex + 1}`}
-                          className="flex-1 bg-richblack-700 text-richblack-5 rounded-lg p-3"
+                          className={`flex-1 bg-richblack-700 text-richblack-5 rounded-lg p-3 border transition-colors ${
+                            validationErrors[qIndex]?.includes('options')
+                              ? 'border-red-500 focus:border-red-400'
+                              : 'border-richblack-600 focus:border-yellow-50'
+                          }`}
                           required
                         />
                       )}
                       <label className="flex items-center gap-2 text-sm text-richblack-300">
                       {question.questionType !== "matchTheFollowing" && (
-                        <>
+                        <div className={`flex items-center gap-2 ${
+                          validationErrors[qIndex]?.includes('correctAnswers') || validationErrors[qIndex]?.includes('correctAnswer')
+                            ? 'text-red-400'
+                            : 'text-richblack-300'
+                        }`}>
                           <input
                             type={question.questionType === "multipleChoice" ? "checkbox" : "radio"}
                             name={`correct-${qIndex}`}
@@ -572,16 +703,106 @@ export default function QuizCreator({ subSectionId, existingQuiz, onClose, onSuc
                                 newQuestions[qIndex].correctAnswer = oIndex;
                               }
                               setQuestions(newQuestions);
+                              
+                              // Clear validation error when a correct answer is selected
+                              if (validationErrors[qIndex]) {
+                                const newValidationErrors = { ...validationErrors };
+                                if (question.questionType === "multipleChoice") {
+                                  newValidationErrors[qIndex] = newValidationErrors[qIndex].filter(err => err !== 'correctAnswers');
+                                } else {
+                                  newValidationErrors[qIndex] = newValidationErrors[qIndex].filter(err => err !== 'correctAnswer');
+                                }
+                                if (newValidationErrors[qIndex].length === 0) {
+                                  delete newValidationErrors[qIndex];
+                                }
+                                setValidationErrors(newValidationErrors);
+                              }
                             }}
-                            className="text-yellow-50"
+                            className={`${
+                              validationErrors[qIndex]?.includes('correctAnswers') || validationErrors[qIndex]?.includes('correctAnswer')
+                                ? 'border-red-500 focus:border-red-400'
+                                : 'text-yellow-50'
+                            }`}
                           />
                           Correct Answer
-                        </>
+                        </div>
                       )}
                       </label>
+                      {(validationErrors[qIndex]?.includes('correctAnswers') || validationErrors[qIndex]?.includes('correctAnswer')) && (
+                        <span className="text-red-400 text-xs block mt-1">Please select the correct answer</span>
+                      )}
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Keywords for Short Answer Questions */}
+            {question.questionType === "shortAnswer" && (
+              <div className="space-y-2">
+                <label className="text-sm text-richblack-5">Keywords *</label>
+                <div className="space-y-2">
+                  {/* Display existing keywords as tags */}
+                  {question.keywords.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {question.keywords.map((keyword, keywordIndex) => (
+                        <div
+                          key={keywordIndex}
+                          className="flex items-center gap-2 bg-yellow-50 text-richblack-900 px-3 py-1 rounded-full text-sm"
+                        >
+                          <span>{keyword}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newKeywords = question.keywords.filter((_, index) => index !== keywordIndex);
+                              handleQuestionChange(qIndex, "keywords", newKeywords);
+                            }}
+                            className="text-richblack-600 hover:text-richblack-900 font-bold"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Input for adding new keywords */}
+                  <input
+                    type="text"
+                    placeholder="Type a keyword and press Enter to add..."
+                    className={`w-full bg-richblack-700 text-richblack-5 rounded-lg p-3 border transition-colors ${
+                      validationErrors[qIndex]?.includes('keywords')
+                        ? 'border-red-500 focus:border-red-400'
+                        : 'border-richblack-600 focus:border-yellow-50'
+                    }`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const keyword = e.target.value.trim();
+                        if (keyword && !question.keywords.includes(keyword)) {
+                          const newKeywords = [...question.keywords, keyword];
+                          handleQuestionChange(qIndex, "keywords", newKeywords);
+                          e.target.value = '';
+                          
+                          // Clear validation error when keywords are added
+                          if (validationErrors[qIndex]?.includes('keywords')) {
+                            const newValidationErrors = { ...validationErrors };
+                            newValidationErrors[qIndex] = newValidationErrors[qIndex].filter(err => err !== 'keywords');
+                            if (newValidationErrors[qIndex].length === 0) {
+                              delete newValidationErrors[qIndex];
+                            }
+                            setValidationErrors(newValidationErrors);
+                          }
+                        }
+                      }
+                    }}
+                  />
+                  {validationErrors[qIndex]?.includes('keywords') && (
+                    <span className="text-red-400 text-xs">At least one keyword is required</span>
+                  )}
+                </div>
+                <p className="text-xs text-richblack-300">
+                  Type a keyword and press Enter to add it as a tag. Student must match at least 50% of these keywords for the answer to be correct.
+                </p>
               </div>
             )}
 

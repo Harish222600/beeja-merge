@@ -1,237 +1,287 @@
-const Certificate = require("../models/certificate");
-const Course = require("../models/course");
-const User = require("../models/user");
-const CourseProgress = require("../models/courseProgress");
+const Certificate = require('../models/certificate');
+const CourseProgress = require('../models/courseProgress');
+const Course = require('../models/course');
+const User = require('../models/user');
+const { createAdvancedNotification } = require('../controllers/notification');
 
 /**
- * Regenerate certificates for a specific course
- * @param {string} courseId - The course ID to regenerate certificates for
- * @param {string} triggerType - Type of trigger ('manual' or 'automatic')
- * @returns {Object} - Result object with regeneration details
+ * Calculate course progress percentage using the same logic as certificate generation
  */
-const regenerateCertificatesForCourse = async (courseId, triggerType = 'manual') => {
-  try {
-    console.log(`Starting certificate regeneration for course: ${courseId}, trigger: ${triggerType}`);
+const calculateProgressPercentage = (courseProgress, course) => {
+    let totalItems = 0;
+    let completedItems = 0;
 
-    // Check if course exists
-    const course = await Course.findById(courseId).populate({
-      path: "courseContent",
-      populate: {
-        path: "subSection",
-        populate: {
-          path: "quiz"
-        }
-      }
-    });
-
-    if (!course) {
-      throw new Error("Course not found");
-    }
-
-    // Calculate total course items (videos + quizzes)
-    let totalCourseItems = 0;
     course.courseContent?.forEach((section) => {
-      section.subSection?.forEach((subsection) => {
-        totalCourseItems += 1; // video
-        if (subsection.quiz) {
-          totalCourseItems += 1; // quiz
-        }
-      });
+        section.subSection?.forEach((subsection) => {
+            // Count video
+            totalItems += 1;
+            if (courseProgress.completedVideos.includes(subsection._id)) {
+                completedItems += 1;
+            }
+
+            // Count quiz if exists
+            if (subsection.quiz) {
+                totalItems += 1;
+                if (courseProgress.completedQuizzes.includes(subsection._id)) {
+                    completedItems += 1;
+                }
+            }
+        });
     });
 
-    // Find all existing certificates for this course
-    const existingCertificates = await Certificate.find({ courseId })
-      .populate('userId', 'firstName lastName email');
+    let progressPercentage = totalItems > 0 ? (completedItems / totalItems) * 100 : 0;
+    
+    // Round to 2 decimal places
+    const multiplier = Math.pow(10, 2);
+    progressPercentage = Math.round(progressPercentage * multiplier) / multiplier;
 
-    const results = [];
-    let regeneratedCount = 0;
-    let invalidatedCount = 0;
-
-    // Process each existing certificate
-    for (const certificate of existingCertificates) {
-      try {
-        const userId = certificate.userId._id;
-        
-        // Check current course progress
-        const courseProgress = await CourseProgress.findOne({
-          courseID: courseId,
-          userId: userId,
-        });
-
-        let currentProgress = 0;
-        let completedItems = 0;
-        
-        if (courseProgress) {
-          completedItems = courseProgress.completedVideos.length + courseProgress.completedQuizzes.length;
-          currentProgress = totalCourseItems > 0 ? (completedItems / totalCourseItems) * 100 : 0;
-          
-          // Round to 2 decimal places
-          const multiplier = Math.pow(10, 2);
-          currentProgress = Math.round(currentProgress * multiplier) / multiplier;
-        }
-
-        const studentName = `${certificate.userId.firstName} ${certificate.userId.lastName}`;
-        
-        if (currentProgress >= 100) {
-          // Student still has 100% completion - regenerate certificate
-          certificate.issuedDate = new Date();
-          certificate.completionDate = new Date();
-          await certificate.save();
-          
-          regeneratedCount++;
-          results.push({
-            certificateId: certificate.certificateId,
-            studentName,
-            email: certificate.userId.email,
-            action: 'regenerated',
-            currentProgress,
-            message: 'Certificate regenerated - course still completed'
-          });
-          
-          console.log(`Certificate regenerated for ${studentName} (${certificate.certificateId})`);
-        } else {
-          // Student no longer has 100% completion - mark as invalid but don't delete
-          // This preserves the certificate record for audit purposes
-          results.push({
-            certificateId: certificate.certificateId,
-            studentName,
-            email: certificate.userId.email,
-            action: 'invalidated',
-            currentProgress,
-            message: `Certificate no longer valid - current progress: ${currentProgress}%`
-          });
-          
-          invalidatedCount++;
-          console.log(`Certificate invalidated for ${studentName} (${certificate.certificateId}) - Progress: ${currentProgress}%`);
-        }
-      } catch (error) {
-        console.error(`Error processing certificate ${certificate.certificateId}:`, error);
-        results.push({
-          certificateId: certificate.certificateId,
-          studentName: certificate.userId ? `${certificate.userId.firstName} ${certificate.userId.lastName}` : 'Unknown',
-          action: 'error',
-          message: `Error processing certificate: ${error.message}`
-        });
-      }
-    }
-
-    const result = {
-      success: true,
-      courseId,
-      courseName: course.courseName,
-      triggerType,
-      totalCertificates: existingCertificates.length,
-      regeneratedCount,
-      invalidatedCount,
-      totalCourseItems,
-      message: `Certificate regeneration completed. ${regeneratedCount} regenerated, ${invalidatedCount} invalidated out of ${existingCertificates.length} total certificates.`,
-      results
-    };
-
-    console.log(`Certificate regeneration completed for course ${courseId}:`, {
-      total: existingCertificates.length,
-      regenerated: regeneratedCount,
-      invalidated: invalidatedCount
-    });
-
-    return result;
-
-  } catch (error) {
-    console.error(`Error in certificate regeneration for course ${courseId}:`, error);
-    throw new Error(`Certificate regeneration failed: ${error.message}`);
-  }
+    return { progressPercentage, totalItems, completedItems };
 };
 
 /**
- * Check if certificates need regeneration for a course
- * @param {string} courseId - The course ID to check
- * @returns {Object} - Status object with regeneration needs
+ * Find students who have existing certificates for a course
  */
-const checkCertificateRegenerationNeeds = async (courseId) => {
-  try {
-    const course = await Course.findById(courseId).populate({
-      path: "courseContent",
-      populate: {
-        path: "subSection",
-        populate: {
-          path: "quiz"
-        }
-      }
-    });
-
-    if (!course) {
-      throw new Error("Course not found");
+const findStudentsWithCertificates = async (courseId) => {
+    try {
+        const certificates = await Certificate.find({ courseId })
+            .populate('userId', 'firstName lastName email')
+            .select('certificateId userId issuedDate completionDate');
+        
+        return certificates;
+    } catch (error) {
+        console.error('Error finding students with certificates:', error);
+        throw error;
     }
+};
 
-    // Calculate total course items
-    let totalCourseItems = 0;
-    course.courseContent?.forEach((section) => {
-      section.subSection?.forEach((subsection) => {
-        totalCourseItems += 1; // video
-        if (subsection.quiz) {
-          totalCourseItems += 1; // quiz
-        }
-      });
-    });
-
-    const certificates = await Certificate.find({ courseId })
-      .populate('userId', 'firstName lastName email');
-
-    const needsRegeneration = [];
-    const validCertificates = [];
-
-    for (const certificate of certificates) {
-      const courseProgress = await CourseProgress.findOne({
-        courseID: courseId,
-        userId: certificate.userId._id,
-      });
-
-      let currentProgress = 0;
-      if (courseProgress) {
-        const completedItems = courseProgress.completedVideos.length + courseProgress.completedQuizzes.length;
-        currentProgress = totalCourseItems > 0 ? (completedItems / totalCourseItems) * 100 : 0;
-        currentProgress = Math.round(currentProgress * 100) / 100;
-      }
-
-      const certificateData = {
-        certificateId: certificate.certificateId,
-        studentName: `${certificate.userId.firstName} ${certificate.userId.lastName}`,
-        email: certificate.userId.email,
-        currentProgress,
-        issuedDate: certificate.issuedDate,
-        lastUpdated: certificate.updatedAt
-      };
-
-      if (currentProgress >= 100) {
-        validCertificates.push(certificateData);
-      } else {
-        needsRegeneration.push({
-          ...certificateData,
-          reason: `Progress dropped to ${currentProgress}%`
+/**
+ * Check if students still have 100% completion after new content is added
+ */
+const checkStudentCompletionStatus = async (courseId, studentIds) => {
+    try {
+        const course = await Course.findById(courseId).populate({
+            path: "courseContent",
+            populate: {
+                path: "subSection",
+                populate: {
+                    path: "quiz"
+                }
+            }
         });
-      }
+
+        if (!course) {
+            throw new Error('Course not found');
+        }
+
+        const completionStatuses = [];
+
+        for (const studentId of studentIds) {
+            const courseProgress = await CourseProgress.findOne({
+                courseID: courseId,
+                userId: studentId,
+            });
+
+            if (courseProgress) {
+                const { progressPercentage, totalItems, completedItems } = calculateProgressPercentage(courseProgress, course);
+                
+                completionStatuses.push({
+                    studentId,
+                    progressPercentage,
+                    totalItems,
+                    completedItems,
+                    isCompleted: progressPercentage >= 100
+                });
+            } else {
+                completionStatuses.push({
+                    studentId,
+                    progressPercentage: 0,
+                    totalItems: 0,
+                    completedItems: 0,
+                    isCompleted: false
+                });
+            }
+        }
+
+        return completionStatuses;
+    } catch (error) {
+        console.error('Error checking student completion status:', error);
+        throw error;
     }
+};
 
-    return {
-      courseId,
-      courseName: course.courseName,
-      totalCertificates: certificates.length,
-      validCertificates: validCertificates.length,
-      needsRegeneration: needsRegeneration.length,
-      totalCourseItems,
-      details: {
-        valid: validCertificates,
-        needsRegeneration
-      }
-    };
+/**
+ * Update certificate issue date while keeping the same certificate ID
+ */
+const updateCertificateIssueDate = async (certificateId, newIssueDate = new Date()) => {
+    try {
+        const updatedCertificate = await Certificate.findByIdAndUpdate(
+            certificateId,
+            { 
+                issuedDate: newIssueDate,
+                updatedAt: new Date()
+            },
+            { new: true }
+        );
 
-  } catch (error) {
-    console.error(`Error checking certificate regeneration needs for course ${courseId}:`, error);
-    throw new Error(`Failed to check certificate status: ${error.message}`);
-  }
+        return updatedCertificate;
+    } catch (error) {
+        console.error('Error updating certificate issue date:', error);
+        throw error;
+    }
+};
+
+/**
+ * Send notification to student about certificate update
+ */
+const notifyStudentAboutCertificateUpdate = async (studentId, courseId, courseName) => {
+    try {
+        await createAdvancedNotification({
+            recipient: studentId,
+            type: 'CERTIFICATE_UPDATED',
+            title: 'Certificate Updated',
+            message: `Your certificate for "${courseName}" has been updated with new content. The certificate has been reissued with today's date.`,
+            relatedCourse: courseId,
+            priority: 'medium',
+            actionUrl: `/dashboard/certificates`,
+            metadata: { 
+                updateReason: 'new_content_added',
+                updatedAt: new Date()
+            }
+        });
+    } catch (error) {
+        console.error('Error sending certificate update notification:', error);
+    }
+};
+
+/**
+ * Main function to regenerate certificates for students who still have 100% completion
+ */
+const regenerateCertificatesForCourse = async (courseId, contentType = 'content') => {
+    try {
+        console.log(`Starting certificate regeneration for course: ${courseId}`);
+        
+        // Find all students with existing certificates for this course
+        const existingCertificates = await findStudentsWithCertificates(courseId);
+        
+        if (existingCertificates.length === 0) {
+            console.log('No existing certificates found for this course');
+            return {
+                success: true,
+                message: 'No existing certificates found for this course',
+                regeneratedCount: 0,
+                invalidatedCount: 0
+            };
+        }
+
+        console.log(`Found ${existingCertificates.length} existing certificates`);
+
+        // Get student IDs
+        const studentIds = existingCertificates.map(cert => cert.userId._id);
+
+        // Check completion status for all students
+        const completionStatuses = await checkStudentCompletionStatus(courseId, studentIds);
+
+        // Get course details for notifications
+        const course = await Course.findById(courseId).select('courseName');
+        
+        let regeneratedCount = 0;
+        let invalidatedCount = 0;
+        const results = [];
+
+        // Process each student
+        for (const status of completionStatuses) {
+            const certificate = existingCertificates.find(
+                cert => cert.userId._id.toString() === status.studentId.toString()
+            );
+
+            if (!certificate) continue;
+
+            if (status.isCompleted) {
+                // Student still has 100% completion - regenerate certificate
+                const updatedCertificate = await updateCertificateIssueDate(certificate._id);
+                
+                // Send notification to student
+                await notifyStudentAboutCertificateUpdate(
+                    status.studentId,
+                    courseId,
+                    course.courseName
+                );
+
+                regeneratedCount++;
+                results.push({
+                    studentId: status.studentId,
+                    studentName: `${certificate.userId.firstName} ${certificate.userId.lastName}`,
+                    action: 'regenerated',
+                    certificateId: certificate.certificateId,
+                    newIssueDate: updatedCertificate.issuedDate,
+                    progressPercentage: status.progressPercentage
+                });
+
+                console.log(`Certificate regenerated for student: ${certificate.userId.firstName} ${certificate.userId.lastName}`);
+            } else {
+                // Student no longer has 100% completion - certificate becomes invalid but we keep it
+                invalidatedCount++;
+                results.push({
+                    studentId: status.studentId,
+                    studentName: `${certificate.userId.firstName} ${certificate.userId.lastName}`,
+                    action: 'invalidated',
+                    certificateId: certificate.certificateId,
+                    progressPercentage: status.progressPercentage,
+                    reason: 'Incomplete course after new content addition'
+                });
+
+                console.log(`Certificate invalidated for student: ${certificate.userId.firstName} ${certificate.userId.lastName} (Progress: ${status.progressPercentage}%)`);
+            }
+        }
+
+        console.log(`Certificate regeneration completed. Regenerated: ${regeneratedCount}, Invalidated: ${invalidatedCount}`);
+
+        return {
+            success: true,
+            message: `Certificate regeneration completed for course`,
+            regeneratedCount,
+            invalidatedCount,
+            results,
+            courseId,
+            courseName: course.courseName
+        };
+
+    } catch (error) {
+        console.error('Error in certificate regeneration:', error);
+        throw error;
+    }
+};
+
+/**
+ * Regenerate certificates when new content is added to a course
+ */
+const handleNewContentAddition = async (courseId, contentType, contentDetails) => {
+    try {
+        console.log(`New ${contentType} added to course ${courseId}:`, contentDetails);
+        
+        // Regenerate certificates for this course
+        const result = await regenerateCertificatesForCourse(courseId, contentType);
+        
+        // Log the results
+        if (result.regeneratedCount > 0 || result.invalidatedCount > 0) {
+            console.log(`Certificate regeneration summary for course ${courseId}:`);
+            console.log(`- Certificates regenerated: ${result.regeneratedCount}`);
+            console.log(`- Certificates invalidated: ${result.invalidatedCount}`);
+        }
+
+        return result;
+    } catch (error) {
+        console.error('Error handling new content addition:', error);
+        throw error;
+    }
 };
 
 module.exports = {
-  regenerateCertificatesForCourse,
-  checkCertificateRegenerationNeeds
+    calculateProgressPercentage,
+    findStudentsWithCertificates,
+    checkStudentCompletionStatus,
+    updateCertificateIssueDate,
+    notifyStudentAboutCertificateUpdate,
+    regenerateCertificatesForCourse,
+    handleNewContentAddition
 };

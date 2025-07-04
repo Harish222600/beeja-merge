@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSelector } from "react-redux";
 import { useForm } from "react-hook-form";
 import { toast } from "react-hot-toast";
 import { HiOutlineCurrencyRupee } from "react-icons/hi";
-import { FaInfoCircle, FaTools } from "react-icons/fa";
 import { showAllCategories } from "../../../services/operations/categoryAPI";
 import { getAllInstructors } from "../../../services/operations/adminAPI";
 import { editCourseDetails } from "../../../services/operations/courseDetailsAPI";
@@ -20,6 +19,12 @@ export default function EditCourse({ course, onCancel, onSave }) {
   const [instructors, setInstructors] = useState([]);
   const [activeTab, setActiveTab] = useState('information');
   const [currentCourse, setCurrentCourse] = useState(course);
+  
+  // Refs for form fields to scroll to on validation error
+  const fieldRefs = useRef({});
+  
+  // State to track validation errors for visual indicators
+  const [validationErrors, setValidationErrors] = useState({});
 
   useEffect(() => {
     const getCategories = async () => {
@@ -54,61 +59,64 @@ export default function EditCourse({ course, onCancel, onSave }) {
     getInstructors();
   }, [course, setValue, token]);
 
-  const onSubmit = async (data) => {
+  const onSubmit = async (data, e) => {
+    // Clear previous validation errors
+    setValidationErrors({});
+
+    // Check if there are any validation errors
+    if (Object.keys(errors).length > 0) {
+      // Set validation errors for visual indicators
+      const newValidationErrors = {};
+      Object.keys(errors).forEach(field => {
+        newValidationErrors[field] = errors[field].message;
+      });
+      setValidationErrors(newValidationErrors);
+
+      // Find the first field with an error
+      const firstErrorField = Object.keys(errors)[0];
+      // Scroll to the field
+      if (fieldRefs.current[firstErrorField]) {
+        fieldRefs.current[firstErrorField].scrollIntoView({
+          behavior: 'smooth',
+          block: 'center'
+        });
+      }
+      return;
+    }
+
     setLoading(true);
     
     try {
-      console.log("Form data before processing:", data);
-      console.log("Original course data:", course);
-      
       const formData = new FormData();
       formData.append("courseId", course._id);
       
       // Only append changed fields
       if (data.courseTitle !== course.courseName) {
         formData.append("courseName", data.courseTitle);
-        console.log("Course name changed:", data.courseTitle);
       }
       if (data.courseShortDesc !== course.courseDescription) {
         formData.append("courseDescription", data.courseShortDesc);
-        console.log("Course description changed");
       }
       if (data.coursePrice !== course.price) {
         formData.append("price", data.coursePrice);
-        console.log("Course price changed:", data.coursePrice);
       }
       if (data.courseCategory !== course.category?._id) {
         formData.append("category", data.courseCategory);
-        console.log("Course category changed:", data.courseCategory);
       }
       if (JSON.stringify(data.courseTags) !== JSON.stringify(course.tag)) {
         formData.append("tag", JSON.stringify(data.courseTags));
-        console.log("Course tags changed:", data.courseTags);
       }
       if (data.courseBenefits !== course.whatYouWillLearn) {
         formData.append("whatYouWillLearn", data.courseBenefits);
-        console.log("Course benefits changed");
       }
       if (JSON.stringify(data.courseRequirements) !== JSON.stringify(course.instructions)) {
         formData.append("instructions", JSON.stringify(data.courseRequirements));
-        console.log("Course requirements changed:", data.courseRequirements);
       }
-      // Handle thumbnail image update
-      if (data.courseImage && data.courseImage !== course.thumbnail) {
-        if (data.courseImage instanceof File) {
-          formData.append("thumbnailImage", data.courseImage);
-          console.log("Appending thumbnail file:", data.courseImage.name);
-        }
+      if (data.courseImage !== course.thumbnail) {
+        formData.append("thumbnailImage", data.courseImage);
       }
       if (data.instructorId !== course.instructor?._id) {
         formData.append("instructorId", data.instructorId);
-        console.log("Instructor changed:", data.instructorId);
-      }
-
-      // Log FormData contents
-      console.log("FormData contents:");
-      for (let [key, value] of formData.entries()) {
-        console.log(key, value);
       }
 
       const result = await editCourseDetails(formData, token);
@@ -144,29 +152,27 @@ export default function EditCourse({ course, onCancel, onSave }) {
         </button>
       </div>
 
-      {/* Tab Navigation - Improved for mobile */}
-      <div className="flex flex-col sm:flex-row gap-2 sm:gap-1 bg-richblack-700 p-2 rounded-lg">
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 bg-richblack-700 p-1 rounded-lg">
         <button
           onClick={() => setActiveTab('information')}
-          className={`py-3 sm:py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+          className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
             activeTab === 'information'
               ? 'bg-yellow-50 text-richblack-900'
               : 'text-richblack-5 hover:text-yellow-50'
-          } flex-1 flex items-center justify-center gap-2`}
+          }`}
         >
-          <FaInfoCircle className="text-base" />
-          <span>Course Information</span>
+          Course Information
         </button>
         <button
           onClick={() => setActiveTab('builder')}
-          className={`py-3 sm:py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+          className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
             activeTab === 'builder'
               ? 'bg-yellow-50 text-richblack-900'
               : 'text-richblack-5 hover:text-yellow-50'
-          } flex-1 flex items-center justify-center gap-2`}
+          }`}
         >
-          <FaTools className="text-base" />
-          <span>Course Builder</span>
+          Course Builder
         </button>
       </div>
 
@@ -174,7 +180,12 @@ export default function EditCourse({ course, onCancel, onSave }) {
       {activeTab === 'information' ? (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         {/* Course Title */}
-        <div className="flex flex-col space-y-2">
+        <div 
+          className={`flex flex-col space-y-2 ${
+            validationErrors.courseTitle ? 'p-3 border border-red-500 rounded-lg bg-red-900/10' : ''
+          }`}
+          ref={el => fieldRefs.current['courseTitle'] = el}
+        >
           <label className="text-sm text-richblack-5" htmlFor="courseTitle">
             Course Title <sup className="text-pink-200">*</sup>
           </label>
@@ -182,17 +193,22 @@ export default function EditCourse({ course, onCancel, onSave }) {
             id="courseTitle"
             placeholder="Enter Course Title"
             {...register("courseTitle", { required: "Course title is required" })}
-            className="form-style w-full"
+            className={`form-style w-full ${
+              validationErrors.courseTitle ? 'border-red-500 focus:border-red-400' : ''
+            }`}
           />
           {errors.courseTitle && (
-            <span className="ml-2 text-xs tracking-wide text-pink-200">
+            <span className="ml-2 text-xs tracking-wide text-red-400">
               {errors.courseTitle.message}
             </span>
           )}
         </div>
 
         {/* Course Short Description */}
-        <div className="flex flex-col space-y-2">
+        <div 
+          className="flex flex-col space-y-2"
+          ref={el => fieldRefs.current['courseShortDesc'] = el}
+        >
           <label className="text-sm text-richblack-5" htmlFor="courseShortDesc">
             Course Short Description <sup className="text-pink-200">*</sup>
           </label>
@@ -210,7 +226,10 @@ export default function EditCourse({ course, onCancel, onSave }) {
         </div>
 
         {/* Course Price */}
-        <div className="flex flex-col space-y-2">
+        <div 
+          className="flex flex-col space-y-2"
+          ref={el => fieldRefs.current['coursePrice'] = el}
+        >
           <label className="text-sm text-richblack-5" htmlFor="coursePrice">
             Course Price <sup className="text-pink-200">*</sup>
           </label>
@@ -238,7 +257,10 @@ export default function EditCourse({ course, onCancel, onSave }) {
         </div>
 
         {/* Course Category */}
-        <div className="flex flex-col space-y-2">
+        <div 
+          className="flex flex-col space-y-2"
+          ref={el => fieldRefs.current['courseCategory'] = el}
+        >
           <label className="text-sm text-richblack-5" htmlFor="courseCategory">
             Course Category <sup className="text-pink-200">*</sup>
           </label>
@@ -271,6 +293,7 @@ export default function EditCourse({ course, onCancel, onSave }) {
           register={register}
           errors={errors}
           setValue={setValue}
+          initialData={course?.tag || []}
         />
 
         {/* Course Thumbnail Image */}
@@ -284,7 +307,10 @@ export default function EditCourse({ course, onCancel, onSave }) {
         />
 
         {/* Benefits of the course */}
-        <div className="flex flex-col space-y-2">
+        <div 
+          className="flex flex-col space-y-2"
+          ref={el => fieldRefs.current['courseBenefits'] = el}
+        >
           <label className="text-sm text-richblack-5" htmlFor="courseBenefits">
             Benefits of the course <sup className="text-pink-200">*</sup>
           </label>
@@ -302,16 +328,22 @@ export default function EditCourse({ course, onCancel, onSave }) {
         </div>
 
         {/* Requirements/Instructions */}
-        <RequirementsField
-          name="courseRequirements"
-          label="Requirements/Instructions"
-          register={register}
-          setValue={setValue}
-          errors={errors}
-        />
+        <div ref={el => fieldRefs.current['courseRequirements'] = el}>
+          <RequirementsField
+            name="courseRequirements"
+            label="Requirements/Instructions"
+            register={register}
+            setValue={setValue}
+            errors={errors}
+            initialData={course?.instructions || []}
+          />
+        </div>
 
         {/* Select Instructor */}
-        <div className="flex flex-col space-y-2">
+        <div 
+          className="flex flex-col space-y-2"
+          ref={el => fieldRefs.current['instructorId'] = el}
+        >
           <label className="text-sm text-richblack-5" htmlFor="instructorId">
             Select Instructor <sup className="text-pink-200">*</sup>
           </label>
@@ -336,30 +368,23 @@ export default function EditCourse({ course, onCancel, onSave }) {
           )}
         </div>
 
-          {/* Submit Button - Improved for mobile */}
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+          {/* Submit Button */}
+          <div className="flex gap-4">
             <button
               type="button"
               onClick={onCancel}
-              className="flex items-center justify-center rounded-lg bg-richblack-600 px-6 py-3.5 text-richblack-5 font-semibold hover:bg-richblack-700 transition-all duration-200 w-full sm:w-auto"
+              className="flex items-center justify-center rounded-md bg-richblack-600 px-6 py-3 text-richblack-5 font-semibold hover:bg-richblack-700 transition-all duration-200"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className={`flex items-center justify-center rounded-lg bg-yellow-50 px-6 py-3.5 text-richblack-900 font-semibold w-full sm:flex-1 ${
-                loading ? "cursor-not-allowed opacity-50" : "hover:scale-[0.98] active:scale-95"
+              className={`flex items-center justify-center rounded-md bg-yellow-50 px-6 py-3 text-richblack-900 font-semibold flex-1 ${
+                loading ? "cursor-not-allowed opacity-50" : "hover:scale-95"
               } transition-all duration-200`}
             >
-              {loading ? (
-                <>
-                  <div className="w-5 h-5 border-t-2 border-richblack-900 rounded-full animate-spin mr-2"></div>
-                  Updating Course...
-                </>
-              ) : (
-                "Update Course"
-              )}
+              {loading ? "Updating Course..." : "Update Course"}
             </button>
           </div>
         </form>

@@ -21,12 +21,13 @@ exports.generateCertificate = async (req, res) => {
     if (!isEnrolled) {
       return res.status(403).json({
         success: false,
-        
+        message: 'Access denied. You are not enrolled in this course.',
       });
     }
     
     // If enrolled, check if course is free or user has active order
     const isFree = course.courseType === 'Free' || course.adminSetFree;
+    
     if (!isFree) {
       const Order = require('../models/order');
       const activeOrder = await Order.findOne({
@@ -35,27 +36,10 @@ exports.generateCertificate = async (req, res) => {
         status: true
       });
 
-      // Check for inactive order
+      // Allow certificate generation if user is enrolled, regardless of current course type
+      // This ensures students who enrolled when course was free can still get certificates
       if (!activeOrder) {
-        const inactiveOrder = await Order.findOne({
-          user: userId,
-          course: courseId,
-          status: false
-        });
-
-        if (inactiveOrder) {
-          return res.status(403).json({
-            success: false,
-            message: "Cannot generate certificate - course access has been deactivated by admin",
-            isDeactivated: true
-          });
-        }
-
-        // No order found - shouldn't happen for enrolled courses
-        return res.status(403).json({
-          success: false,
-          message: "No active enrollment found for this course"
-        });
+        console.log(`Certificate generation allowed for enrolled student - User: ${userId}, Course: ${courseId}`);
       }
     }
     if (!course) {

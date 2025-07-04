@@ -4,6 +4,7 @@ const Course = require('../models/course');
 const Quiz = require('../models/quiz');
 const { uploadImageToCloudinary } = require('../utils/imageUploader');
 const { createNewContentNotification } = require('./notification');
+const { handleNewContentAddition } = require('../utils/certificateRegeneration');
 
 // ================ Update SubSection ================
 exports.updateSubSection = async (req, res) => {
@@ -121,6 +122,34 @@ exports.updateSubSection = async (req, res) => {
         await subSection.save();
 
         const updatedSection = await Section.findById(sectionId).populate("subSection");
+
+        // Handle certificate regeneration if content was modified
+        if (title || description || req.file || req.body.quiz !== undefined) {
+            // Find the course that contains this section
+            const course = await Course.findOne({
+                courseContent: sectionId
+            });
+
+            if (course) {
+                try {
+                    await handleNewContentAddition(
+                        course._id,
+                        'lecture_update',
+                        {
+                            sectionId,
+                            subSectionId,
+                            title: subSection.title,
+                            hasVideo: !!subSection.videoUrl,
+                            hasQuiz: !!subSection.quiz,
+                            updateType: 'modification'
+                        }
+                    );
+                } catch (certError) {
+                    console.error('Error handling certificate regeneration:', certError);
+                    // Don't fail the subsection update if certificate regeneration fails
+                }
+            }
+        }
 
         return res.json({
             success: true,
@@ -290,6 +319,23 @@ exports.createSubSection = async (req, res) => {
                 sectionId,
                 SubSectionDetails._id
             );
+
+            // Handle certificate regeneration for students who completed the course
+            try {
+                await handleNewContentAddition(
+                    course._id,
+                    'lecture',
+                    {
+                        sectionId,
+                        subSectionId: SubSectionDetails._id,
+                        title: SubSectionDetails.title,
+                        hasVideo: !!videoUrl
+                    }
+                );
+            } catch (certError) {
+                console.error('Error handling certificate regeneration:', certError);
+                // Don't fail the subsection creation if certificate regeneration fails
+            }
         }
 
         // return response
