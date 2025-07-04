@@ -9,6 +9,8 @@ import { BigPlayButton, Player } from "video-react"
 import { markLectureAsComplete } from "../../../services/operations/courseDetailsAPI"
 import { updateCompletedLectures } from "../../../slices/viewCourseSlice"
 import { setCourseViewSidebar } from "../../../slices/sidebarSlice"
+import { apiConnector } from "../../../services/apiConnector"
+import { endpoints } from "../../../services/apis"
 
 import IconBtn from "../../common/IconBtn"
 
@@ -30,6 +32,55 @@ const VideoDetails = () => {
   const [previewSource, setPreviewSource] = useState("")
   const [videoEnded, setVideoEnded] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [watchTime, setWatchTime] = useState(0)
+  const watchTimeRef = useRef(0)
+  const lastUpdateTime = useRef(Date.now())
+
+  // Update watch time every 30 seconds
+  const updateWatchTime = useCallback(async () => {
+    if (watchTimeRef.current > 0) {
+      try {
+        await apiConnector("POST", endpoints.UPDATE_WATCH_TIME_API, {
+          courseId,
+          subSectionId,
+          watchTime: Math.floor(watchTimeRef.current)
+        }, {
+          Authorization: `Bearer ${token}`
+        })
+        watchTimeRef.current = 0
+      } catch (error) {
+        console.error("Error updating watch time:", error)
+      }
+    }
+  }, [courseId, subSectionId, token])
+
+  // Handle time update from video player
+  const handleTimeUpdate = useCallback(() => {
+    if (!playerRef.current) return
+    
+    const currentTime = Date.now()
+    const timeDiff = currentTime - lastUpdateTime.current
+    
+    // Update every second
+    if (timeDiff >= 1000) {
+      const newWatchTime = watchTimeRef.current + (timeDiff / 1000)
+      watchTimeRef.current = newWatchTime
+      setWatchTime(newWatchTime)
+      lastUpdateTime.current = currentTime
+      
+      // Send update every 30 seconds
+      if (newWatchTime >= 30) {
+        updateWatchTime()
+      }
+    }
+  }, [updateWatchTime])
+
+  // Update watch time when component unmounts
+  useEffect(() => {
+    return () => {
+      updateWatchTime()
+    }
+  }, [updateWatchTime])
 
   // Memoized video data calculation
   const currentVideoData = useMemo(() => {
@@ -172,7 +223,25 @@ const VideoDetails = () => {
           aspectRatio="16:9"
           playsInline
           autoPlay
-          onEnded={() => setVideoEnded(true)}
+          onEnded={() => {
+            setVideoEnded(true)
+            updateWatchTime()
+          }}
+          onTimeUpdate={() => {
+            if (playerRef.current) {
+              const currentTime = playerRef.current.getState().player.currentTime;
+              const timeDiff = currentTime - (watchTimeRef.current || 0);
+              if (timeDiff >= 1) { // Update every second
+                watchTimeRef.current = currentTime;
+                setWatchTime(currentTime);
+                
+                // Send update every 30 seconds
+                if (Math.floor(currentTime) % 30 === 0) {
+                  updateWatchTime();
+                }
+              }
+            }
+          }}
           src={videoData.videoUrl}
         >
           <BigPlayButton position="center" />

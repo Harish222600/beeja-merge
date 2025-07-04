@@ -103,11 +103,7 @@ const ModernNavbar = () => {
         >
           <Link to="/" aria-label="Home">
             <img
-<<<<<<< HEAD
               src={BeejaLogo}
-=======
-              src={studyNotionLogo}
->>>>>>> origin/josh
               width={120}
               height={30}
               loading="lazy"

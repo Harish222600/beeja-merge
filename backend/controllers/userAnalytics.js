@@ -41,8 +41,16 @@ exports.getUserAnalytics = async (req, res) => {
                 });
                 if (!course) return null;
 
-                // Find progress for this course
-                const progress = user.courseProgress.find(p => p.courseID.toString() === courseId.toString());
+                // Find progress for this course - check both courseProgress array and direct CourseProgress query
+                let progress = user.courseProgress.find(p => p.courseID && p.courseID.toString() === courseId.toString());
+                
+                // If not found in populated data, query directly
+                if (!progress) {
+                    progress = await CourseProgress.findOne({
+                        userId: userId,
+                        courseID: courseId
+                    });
+                }
 
                 let totalSubSections = 0;
                 if (course.courseContent && course.courseContent.length > 0) {
@@ -78,48 +86,25 @@ exports.getUserAnalytics = async (req, res) => {
 
         const validCourseProgress = courseProgressData.filter(Boolean);
         
-        // Calculate average progress across all enrolled courses
-        const totalProgress = validCourseProgress.reduce((sum, course) => sum + course.progressPercentage, 0);
-        const completionRate = validCourseProgress.length > 0 
-            ? Math.round(totalProgress / validCourseProgress.length)
-            : 0;
-
-        // Get total videos stats for display
+        // Calculate total videos and completed videos for stats and completion rate
         const totalVideosAcrossCourses = validCourseProgress.reduce((sum, course) => sum + course.totalVideos, 0);
         const totalCompletedVideos = validCourseProgress.reduce((sum, course) => sum + course.completedVideos, 0);
+        
+        // Calculate completion rate as percentage of total videos completed
+        const completionRate = totalVideosAcrossCourses > 0 
+            ? Math.round((totalCompletedVideos / totalVideosAcrossCourses) * 100)
+            : 0;
 
         // Get completed courses count based on 100% progress
         const completedCoursesCount = validCourseProgress.filter(course => course.progressPercentage === 100).length;
 
-        // Calculate total learning time based on actual video durations watched
+        // Calculate total learning time from actual watch time data
         let totalLearningTime = 0;
         
-        for (const courseProgress of user.courseProgress) {
-            if (courseProgress.completedVideos && courseProgress.completedVideos.length > 0) {
-                // Get the course with populated subsections
-                const courseWithContent = await Course.findById(courseProgress.courseID).populate({
-                    path: 'courseContent',
-                    populate: {
-                        path: 'subSection'
-                    }
-                });
-                
-                if (courseWithContent && courseWithContent.courseContent) {
-                    // Calculate total duration of completed videos
-                    courseWithContent.courseContent.forEach(section => {
-                        if (section.subSection && Array.isArray(section.subSection)) {
-                            section.subSection.forEach(subSection => {
-                                // Check if this subsection is completed
-                                if (courseProgress.completedVideos.includes(subSection._id.toString())) {
-                                    // Add the duration (assuming duration is in seconds, convert to minutes)
-                                    const durationInMinutes = subSection.timeDuration ? 
-                                        (subSection.timeDuration / 60) : 0;
-                                    totalLearningTime += durationInMinutes;
-                                }
-                            });
-                        }
-                    });
-                }
+        if (user.watchTime && user.watchTime instanceof Map) {
+            // Sum all watch times (stored in seconds, convert to minutes)
+            for (const [videoKey, watchTimeSeconds] of user.watchTime) {
+                totalLearningTime += watchTimeSeconds / 60; // Convert seconds to minutes
             }
         }
 
@@ -409,6 +394,76 @@ exports.getUserActivity = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Error fetching activity data',
+            error: error.message
+        });
+    }
+};
+
+// Update user's watch time for a specific video
+exports.updateWatchTime = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { courseId, subSectionId, watchTime } = req.body;
+
+        // Validate required fields
+        if (!courseId || !subSectionId || watchTime === undefined) {
+            return res.status(400).json({
+                success: false,
+                message: 'Course ID, SubSection ID, and watch time are required'
+            });
+        }
+
+        // Find or create user's watch time record
+        const User = require('../models/user');
+        const user = await User.findById(userId);
+        
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Initialize watchTime object if it doesn't exist
+        if (!user.watchTime) {
+            user.watchTime = new Map();
+        }
+
+        // Create a unique key for this video
+        const videoKey = `${courseId}_${subSectionId}`;
+        
+        // Get current watch time for this video or default to 0
+        const currentWatchTime = user.watchTime.get(videoKey) || 0;
+        
+        // Add the new watch time (in seconds)
+        const newWatchTime = currentWatchTime + watchTime;
+        
+        // Update the watch time
+        user.watchTime.set(videoKey, newWatchTime);
+        
+        // Mark the field as modified for Mongoose
+        user.markModified('watchTime');
+        
+        // Save the user
+        await user.save();
+
+        console.log(`Updated watch time for user ${userId}, video ${videoKey}: +${watchTime}s (total: ${newWatchTime}s)`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Watch time updated successfully',
+            data: {
+                videoKey,
+                addedTime: watchTime,
+                totalTime: newWatchTime
+            }
+        });
+
+    } catch (error) {
+        console.error('Error updating watch time:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Error updating watch time',
             error: error.message
         });
     }

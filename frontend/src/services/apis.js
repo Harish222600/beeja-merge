@@ -10,6 +10,7 @@ export const endpoints = {
   // User Analytics
   USER_ANALYTICS_API: BASE_URL + "/api/v1/user/analytics",
   USER_ACTIVITY_API: BASE_URL + "/api/v1/user/activity",
+  UPDATE_WATCH_TIME_API: BASE_URL + "/api/v1/user/update-watch-time",
 }
 
 // PROFILE ENDPOINTS

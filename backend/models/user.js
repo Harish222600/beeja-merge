@@ -61,7 +61,12 @@ const userSchema = new mongoose.Schema(
                 ref: 'CourseProgress'
 
             }
-        ]
+        ],
+        watchTime: {
+            type: Map,
+            of: Number,
+            default: new Map()
+        }
     },// Add timestamps for when the document is created and last modified
     { timestamps: true }
 );
