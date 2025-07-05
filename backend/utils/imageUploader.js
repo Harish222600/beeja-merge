@@ -140,112 +140,121 @@ const uploadWithRetry = async (file, options, retryCount = 0) => {
 
 exports.uploadImageToCloudinary = async (file, folder, height, quality) => {
     try {
-        console.log('🔧 Starting file upload to Cloudinary');
+        console.log('🔧 Starting ultra-minimal file upload to Cloudinary');
         console.log('File details:', {
             originalname: file.originalname,
             mimetype: file.mimetype,
             size: file.size,
-            folder: folder
+            sizeInMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
         });
 
-        // Check if file is an image and needs processing
-        const isImage = file.mimetype && file.mimetype.startsWith('image/');
-        let fileBuffer = file.buffer;
-
-        if (isImage && file.size > IMAGE_CONFIG.maxFileSize) {
-            console.log('⚠️ Large image detected, processing before upload...');
-            
-            // Process image with custom options if height is specified
-            const processOptions = {};
-            if (height) {
-                processOptions.maxHeight = height;
-                processOptions.maxWidth = height * 2; // Maintain aspect ratio
-            }
-            
-            // Process the image to reduce size
-            fileBuffer = await processImage(file.buffer, processOptions);
-            
-            console.log('📏 Image processed for upload:', {
-                originalSize: file.size,
-                processedSize: fileBuffer.length,
-                reduction: ((file.size - fileBuffer.length) / file.size * 100).toFixed(2) + '%'
-            });
-        } else if (isImage && (file.size > 1024 * 1024)) { // Process images larger than 1MB
-            console.log('🔄 Optimizing image before upload...');
-            
-            const processOptions = {};
-            if (height) {
-                processOptions.maxHeight = height;
-                processOptions.maxWidth = height * 2;
-            }
-            
-            fileBuffer = await processImage(file.buffer, processOptions);
+        // Validate buffer
+        if (!file.buffer || !Buffer.isBuffer(file.buffer)) {
+            throw new Error('Invalid file buffer');
         }
-        
-        // Base options for all uploads
-        const options = { 
-            folder,
-            resource_type: 'auto',
-            use_filename: true,
-            unique_filename: true,
-            overwrite: true, // Changed to true to ensure updates work
-            secure: true,
-            quality: quality || 'auto:good'
+
+        // Check if file size exceeds Cloudinary free tier limits
+        const fileSizeInMB = file.size / (1024 * 1024);
+        if (fileSizeInMB > 100) {
+            console.log('⚠️ File size exceeds 100MB, this might cause issues with free Cloudinary account');
+        }
+
+        // Detect if file is a video
+        const isVideo = file.mimetype && file.mimetype.startsWith('video/');
+
+        // Try upload without folder first (most minimal approach)
+        let uploadOptions = {
+            resource_type: isVideo ? 'video' : 'auto'
         };
 
-        // Specific options based on folder/usage - removed height/crop since we pre-process
-        if (folder === 'chat-images') {
-            // Chat images need immediate processing
-            options.async = false;
-        } else if (folder.includes('course')) {
-            // Course-related images get optimization
-            options.eager = [
-                { width: 1024, crop: "scale" }, // Desktop
-                { width: 768, crop: "scale" },  // Tablet
-                { width: 480, crop: "scale" }   // Mobile
-            ];
-            options.eager_async = true;
-        }
+        console.log('📋 Attempting upload with minimal options (no folder):', JSON.stringify(uploadOptions, null, 2));
         
-        console.log('📋 Upload options:', JSON.stringify(options, null, 2));
-        
-        // Use upload with retry for important files (like course thumbnails)
-        const result = await new Promise((resolve, reject) => {
-            const uploadStream = cloudinary.uploader.upload_stream(
-                options,
-                (error, result) => {
-                    if (error) {
-                        console.error('Cloudinary upload error:', error);
-                        reject(error);
-                    } else {
-                        console.log('Cloudinary upload result:', {
-                            secure_url: result.secure_url,
-                            public_id: result.public_id,
-                            format: result.format,
-                            resource_type: result.resource_type,
-                            status: result.status || 'completed'
-                        });
-                        resolve(result);
+        try {
+            // First attempt: Ultra-minimal upload without folder
+            const result = await new Promise((resolve, reject) => {
+                const uploadStream = cloudinary.uploader.upload_stream(
+                    uploadOptions,
+                    (error, result) => {
+                        if (error) {
+                            console.error('Cloudinary upload error (no folder):', error);
+                            reject(error);
+                        } else {
+                            console.log('Cloudinary upload success (no folder):', {
+                                secure_url: result.secure_url,
+                                public_id: result.public_id,
+                                format: result.format,
+                                resource_type: result.resource_type,
+                                duration: result.duration
+                            });
+                            resolve(result);
+                        }
                     }
-                }
-            );
+                );
 
-            if (fileBuffer) {
-                uploadStream.end(fileBuffer);
+                // Stream the buffer directly to Cloudinary
+                uploadStream.end(file.buffer);
+            });
+
+            console.log('✅ Upload successful without folder:', {
+                secure_url: result.secure_url,
+                public_id: result.public_id
+            });
+
+            return result;
+
+        } catch (firstError) {
+            console.log('❌ First attempt failed, trying with folder...');
+            
+            // Second attempt: Add folder if first attempt fails
+            if (folder && folder !== 'undefined' && folder.trim() !== '') {
+                uploadOptions.folder = folder;
+                console.log('📋 Retrying with folder:', JSON.stringify(uploadOptions, null, 2));
+                
+                const result = await new Promise((resolve, reject) => {
+                    const uploadStream = cloudinary.uploader.upload_stream(
+                        uploadOptions,
+                        (error, result) => {
+                            if (error) {
+                                console.error('Cloudinary upload error (with folder):', error);
+                                reject(error);
+                            } else {
+                                console.log('Cloudinary upload success (with folder):', {
+                                    secure_url: result.secure_url,
+                                    public_id: result.public_id,
+                                    format: result.format,
+                                    resource_type: result.resource_type,
+                                    duration: result.duration
+                                });
+                                resolve(result);
+                            }
+                        }
+                    );
+
+                    // Stream the buffer directly to Cloudinary
+                    uploadStream.end(file.buffer);
+                });
+
+                console.log('✅ Upload successful with folder:', {
+                    secure_url: result.secure_url,
+                    public_id: result.public_id
+                });
+
+                return result;
             } else {
-                reject(new Error('File buffer is required'));
+                // If no folder to try, throw the original error
+                throw firstError;
             }
-        });
-
-        console.log('✅ Upload successful:', {
-            secure_url: result.secure_url,
-            public_id: result.public_id
-        });
-
-        return result;
+        }
     }
     catch (error) {
         console.error("Error while uploading file to Cloudinary:", error);
+        
+        // Provide specific guidance for 413 errors
+        if (error.http_code === 413) {
+            const fileSizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+            throw new Error(`File too large for upload (${fileSizeInMB}MB). Cloudinary free accounts have upload limits. Please try a smaller file or upgrade your Cloudinary account.`);
+        }
+        
         throw new Error(`Failed to upload file: ${error.message}`);
     }
 }

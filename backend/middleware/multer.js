@@ -7,7 +7,7 @@ const storage = multer.memoryStorage();
 const upload = multer({ 
     storage: storage,
     limits: {
-        fileSize: 500 * 1024 * 1024, // Increased to 500MB limit
+        fileSize: 100 * 1024 * 1024, // Reduced to 100MB for free Cloudinary account compatibility
     },
     fileFilter: function (req, file, cb) {
         // Accept video files and images

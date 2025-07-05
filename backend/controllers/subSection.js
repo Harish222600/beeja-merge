@@ -44,12 +44,12 @@ exports.updateSubSection = async (req, res) => {
                 const video = req.file;
                 console.log('Uploading video file (update):', video.originalname);
                 
-                // Check file size limit (500MB)
-                const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB in bytes
+                // Check file size limit (100MB for free Cloudinary account)
+                const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB in bytes
                 if (video.size > MAX_FILE_SIZE) {
                     return res.status(400).json({
                         success: false,
-                        message: 'Video file size exceeds limit of 500MB'
+                        message: 'Video file size exceeds limit of 100MB. Free Cloudinary accounts have upload restrictions.'
                     });
                 }
 
@@ -80,20 +80,34 @@ exports.updateSubSection = async (req, res) => {
                 
                 // Provide more detailed error messages based on error type
                 let errorMessage = 'Video upload failed';
+                let statusCode = 500;
+                
                 if (uploadError.message.includes('timeout')) {
                     errorMessage = 'Video upload timed out. Please try again with a smaller file or better connection';
-                } else if (uploadError.http_code === 413) {
-                    errorMessage = 'Video file size too large';
+                    statusCode = 408;
+                } else if (uploadError.message.includes('too large to process synchronously')) {
+                    errorMessage = 'Video is being processed asynchronously. Please wait a moment and try again';
+                    statusCode = 202; // Accepted - processing
+                } else if (uploadError.http_code === 413 || uploadError.message.includes('file size')) {
+                    errorMessage = 'Video file size too large. Please compress your video or use a smaller file';
+                    statusCode = 413;
+                } else if (uploadError.message.includes('Invalid video file') || uploadError.message.includes('format')) {
+                    errorMessage = 'Invalid video format. Please use MP4, AVI, MOV, or other supported formats';
+                    statusCode = 400;
+                } else if (uploadError.message.includes('network') || uploadError.message.includes('connection')) {
+                    errorMessage = 'Network error during upload. Please check your connection and try again';
+                    statusCode = 503;
                 }
                 
-                return res.status(500).json({
+                return res.status(statusCode).json({
                     success: false,
                     message: errorMessage,
                     error: uploadError.message,
                     details: {
-                        fileName: video.originalname,
-                        fileSize: video.size,
-                        errorType: uploadError.name
+                        fileName: req.file ? req.file.originalname : 'unknown',
+                        fileSize: req.file ? req.file.size : 0,
+                        errorType: uploadError.name,
+                        suggestion: statusCode === 202 ? 'The video is being processed in the background. You can continue and the video will be available shortly.' : 'Please try uploading a smaller or different video file.'
                     }
                 });
             }
@@ -209,12 +223,12 @@ exports.createSubSection = async (req, res) => {
                     path: videoFile.path
                 });
                 
-                // Check file size limit (500MB)
-                const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB in bytes
+                // Check file size limit (100MB for free Cloudinary account)
+                const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB in bytes
                 if (videoFile.size > MAX_FILE_SIZE) {
                     return res.status(400).json({
                         success: false,
-                        message: 'Video file size exceeds limit of 500MB'
+                        message: 'Video file size exceeds limit of 100MB. Free Cloudinary accounts have upload restrictions.'
                     });
                 }
 
@@ -255,20 +269,34 @@ exports.createSubSection = async (req, res) => {
                 
                 // Provide more detailed error messages based on error type
                 let errorMessage = 'Video upload failed';
+                let statusCode = 500;
+                
                 if (uploadError.message.includes('timeout')) {
                     errorMessage = 'Video upload timed out. Please try again with a smaller file or better connection';
-                } else if (uploadError.http_code === 413) {
-                    errorMessage = 'Video file size too large';
+                    statusCode = 408;
+                } else if (uploadError.message.includes('too large to process synchronously')) {
+                    errorMessage = 'Video is being processed asynchronously. Please wait a moment and try again';
+                    statusCode = 202; // Accepted - processing
+                } else if (uploadError.http_code === 413 || uploadError.message.includes('file size')) {
+                    errorMessage = 'Video file size too large. Please compress your video or use a smaller file';
+                    statusCode = 413;
+                } else if (uploadError.message.includes('Invalid video file') || uploadError.message.includes('format')) {
+                    errorMessage = 'Invalid video format. Please use MP4, AVI, MOV, or other supported formats';
+                    statusCode = 400;
+                } else if (uploadError.message.includes('network') || uploadError.message.includes('connection')) {
+                    errorMessage = 'Network error during upload. Please check your connection and try again';
+                    statusCode = 503;
                 }
                 
-                return res.status(500).json({
+                return res.status(statusCode).json({
                     success: false,
                     message: errorMessage,
                     error: uploadError.message,
                     details: {
                         fileName: videoFile.originalname,
                         fileSize: videoFile.size,
-                        errorType: uploadError.name
+                        errorType: uploadError.name,
+                        suggestion: statusCode === 202 ? 'The video is being processed in the background. You can continue and the video will be available shortly.' : 'Please try uploading a smaller or different video file.'
                     }
                 });
             }
@@ -360,11 +388,6 @@ exports.createSubSection = async (req, res) => {
     }
 }
 
-
-
-
-
-
 // ================ Delete SubSection ================
 exports.deleteSubSection = async (req, res) => {
     try {
@@ -402,7 +425,6 @@ exports.deleteSubSection = async (req, res) => {
         console.error(error)
         return res.status(500).json({
             success: false,
-
             error: error.message,
             message: "An error occurred while deleting the SubSection",
         })
